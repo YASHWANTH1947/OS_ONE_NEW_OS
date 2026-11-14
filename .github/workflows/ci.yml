@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-and-boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install kernel build and emulator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential binutils grub-pc-bin grub-common xorriso \
+            qemu-system-x86 python3
+
+      - name: Validate inference, fixtures, and reports
+        run: make test
+
+      - name: Build, boot, benchmark, and generate report
+        run: make bench
+
+      - name: Run host factorial cells (forced kernels)
+        run: make dispatch-csv
+
+      - name: Boot the capability probe (default CPU)
+        run: make probe
+
+      - name: Upload boot and benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-os-lab-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            build/ai-os-lab.iso
+            build/kernel.elf
+            build/host.json
+            build/host.log
+            build/unikernel.log
+            build/dispatch.csv
+            dashboard/data/results.json
+            dashboard/data/results.js

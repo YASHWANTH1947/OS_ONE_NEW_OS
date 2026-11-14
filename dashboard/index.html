@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Benchmark report for a bare-metal x86-64 AI inference unikernel: boot pipeline, latency distribution, sample accuracy and footprint, measured in QEMU.">
+<meta name="color-scheme" content="dark">
+<title>Bare-Metal AI Inference Unikernel — Measurement Report</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1017'/%3E%3Cpath d='M9 21V11l7 6 7-6v10' stroke='%234fd1c5' stroke-width='2.2' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to report</a>
+
+<div class="ambient" aria-hidden="true">
+  <div class="ambient-orb ambient-orb--a"></div>
+  <div class="ambient-orb ambient-orb--b"></div>
+  <div class="ambient-grid"></div>
+</div>
+
+<header class="topbar">
+  <div class="topbar__inner">
+    <a class="brand" href="#top" aria-label="Unikernel.ML report home">
+      <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="0.75" y="0.75" width="30.5" height="30.5" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.35"/>
+        <path d="M8.5 22.5V9.5L16 16.2l7.5-6.7v13" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      </svg>
+      <span class="brand__text">UNIKERNEL<span class="brand__accent">.ML</span></span>
+    </a>
+
+    <nav class="nav" aria-label="Report sections">
+      <a href="#pipeline">Pipeline</a>
+      <a href="#latency">Latency</a>
+      <a href="#dispatch">Engine</a>
+      <a href="#accuracy">Accuracy</a>
+      <a href="#training">Training</a>
+      <a href="#method">Method</a>
+    </nav>
+
+    <div class="runstatus" title="Data source">
+      <span class="runstatus__dot" aria-hidden="true"></span>
+      <span class="runstatus__label" id="statusText">awaiting measurement</span>
+    </div>
+  </div>
+  <div class="topbar__progress" aria-hidden="true"><span id="scrollBar"></span></div>
+</header>
+
+<main id="main">
+  <section class="hero" id="top">
+    <div class="wrap">
+      <div class="hero__grid">
+        <div class="hero__copy">
+          <p class="eyebrow reveal">x86-64 systems capstone &middot; bare metal, no operating system</p>
+          <h1 class="hero__title reveal">
+            Neural inference<br>
+            <span class="grad">with nothing in the way.</span>
+          </h1>
+          <p class="lede reveal">
+            A single-address-space unikernel that boots through GRUB into 64-bit long
+            mode and runs a neural network in ring&nbsp;0. No scheduler,
+            no syscalls, no libc, no filesystem &mdash; the weights arrive as a
+            GRUB module and the first forward pass starts within milliseconds.
+          </p>
+          <ul class="chips reveal" id="heroChips">
+            <li class="chip">GRUB &middot; Multiboot2</li>
+            <li class="chip">QEMU &middot; qemu-system-x86_64</li>
+            <li class="chip">784 &rarr; 128 &rarr; 10 MLP</li>
+            <li class="chip">scalar &middot; AVX2 &middot; FMA dispatch</li>
+          </ul>
+          <p class="hero__stamp reveal" id="runStamp">Waiting for a benchmark run.</p>
+        </div>
+
+        <aside class="hero__panel card reveal" aria-label="Headline measurements">
+          <div class="panel__head">
+            <span class="mono-label">measured this run</span>
+            <span class="badge" id="scenarioBadge">Inference benchmark</span>
+          </div>
+
+          <div class="statgrid">
+            <div class="stat">
+              <span class="stat__label">median latency</span>
+              <span class="stat__value"><span data-counter="p50">0</span><span class="stat__unit">&micro;s</span></span>
+              <span class="stat__hint">p50 across every timed pass</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">tail latency</span>
+              <span class="stat__value"><span data-counter="p99">0</span><span class="stat__unit">&micro;s</span></span>
+              <span class="stat__hint">p99 &mdash; the budget that matters</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">boot artifacts</span>
+              <span class="stat__value"><span data-counter="footprint">0</span><span class="stat__unit">MiB</span></span>
+              <span class="stat__hint">kernel image, weights and sample modules</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">sample accuracy</span>
+              <span class="stat__value"><span data-counter="accuracy">0</span><span class="stat__unit">%</span></span>
+              <span class="stat__hint" id="accuracyHint">frozen benchmark samples</span>
+            </div>
+          </div>
+
+          <div class="panel__foot">
+            <div class="minimeter">
+              <span class="mono-label">jitter</span>
+              <span class="minimeter__value" id="jitterValue">&mdash;</span>
+              <span class="minimeter__note">p99 / p50</span>
+            </div>
+            <div class="minimeter">
+              <span class="mono-label">throughput</span>
+              <span class="minimeter__value" id="throughputValue">&mdash;</span>
+              <span class="minimeter__note">passes / second</span>
+            </div>
+            <div class="minimeter">
+              <span class="mono-label">timer</span>
+              <span class="minimeter__value" id="timerValue">&mdash;</span>
+              <span class="minimeter__note">TSC frequency</span>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="pipeline" aria-labelledby="pipelineTitle">
+    <div class="wrap">
+      <header class="section__head reveal">
+        <span class="section__index">01</span>
+        <h2 id="pipelineTitle">Boot pipeline</h2>
+        <p>
+          Eight stages take the machine from firmware to the first tensor
+          multiply &mdash; including a CPUID capability snapshot and a measured
+          choice of execution kernel. Every line below is parsed from the
+          serial transcript of the real boot, not reconstructed afterwards.
+        </p>
+        <p class="section__note" id="bootNote"></p>
+      </header>
+
+      <div class="split">
+        <ol class="stages" id="stageList">
+          <li class="stage"><span class="stage__index">1</span><div><h3>Entry</h3><p>Loading boot transcript&hellip;</p></div></li>
+        </ol>
+
+        <aside class="card stackcard reveal" aria-label="What was removed">
+          <h3 class="card__title">What is <em>not</em> in this image</h3>
+          <ul class="crosslist">
+            <li>Multi-process scheduler</li>
+            <li>Ring&nbsp;3 / ring&nbsp;0 transitions</li>
+            <li>POSIX subsystem and syscalls</li>
+            <li>Virtual file system and disk driver</li>
+            <li>Networking stack and daemons</li>
+            <li>User accounts and permission checks</li>
+          </ul>
+          <p class="card__note">
+            A general-purpose kernel exists to arbitrate between competing
+            programs. This workload has exactly one program, so the arbitration
+            layer is removed rather than configured away.
+          </p>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="latency" aria-labelledby="latencyTitle">
+    <div class="wrap">
+      <header class="section__head reveal">
+        <span class="section__index">02</span>
+        <h2 id="latencyTitle">Latency distribution</h2>
+        <p>
+          Each forward pass is bracketed with a fenced timestamp-counter read, so
+          the tails are visible instead of being averaged away. The histogram is
+          emitted by the kernel itself.
+        </p>
+      </header>
+
+      <div class="card chartcard reveal">
+        <div class="chartcard__head">
+          <div>
+            <h3 class="card__title">Pass latency &mdash; unikernel</h3>
+            <p class="card__note" id="histNote">Distribution of individually timed passes.</p>
+          </div>
+          <div class="legend" aria-hidden="true">
+            <span class="legend__item"><i class="swatch swatch--uni"></i>unikelernel passes</span>
+          </div>
+        </div>
+        <div class="chart" id="histogram" role="img" aria-label="Latency histogram"></div>
+        <div class="chart__axis" id="histAxis"></div>
+      </div>
+
+      <div class="grid grid--2">
+        <div class="card reveal" aria-label="Percentiles">
+          <h3 class="card__title">Percentiles</h3>
+          <div class="pctlist" id="percentileList"></div>
+        </div>
+        <div class="card reveal" aria-label="Native baseline comparison">
+          <div class="chartcard__head">
+            <h3 class="card__title">Native Linux baseline</h3>
+            <span class="badge badge--ghost" id="hostBadge">same source, same weights</span>
+          </div>
+          <div class="pctlist pctlist--host" id="hostPercentiles"></div>
+          <p class="card__note" id="hostNote">
+            The baseline runs the identical <code>src/ai.c</code> as an ordinary
+            process on the host CPU. It is not a like-for-like comparison: the
+            guest CPU above is emulated by QEMU.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="dispatch" aria-labelledby="dispatchTitle">
+    <div class="wrap">
+      <header class="section__head reveal">
+        <span class="section__index">03</span>
+        <h2 id="dispatchTitle">Adaptive execution engine</h2>
+        <p>
+          The kernel ships three mathematically equivalent forward passes
+          (portable scalar, AVX2, AVX2+FMA). At boot it probes CPUID, enables
+          the AVX state machine itself, times every eligible kernel, gates
+          every SIMD path against the scalar reference, and selects by
+          measurement &mdash; never by a capability guess.
+        </p>
+        <p class="section__note" id="dispatchNote"></p>
+      </header>
+
+      <div class="grid grid--2">
+        <div class="card reveal" aria-label="Unikernel dispatch record">
+          <div class="chartcard__head">
+            <h3 class="card__title">Inside the unikernel</h3>
+            <span class="badge badge--ghost" id="dispatchUkBadge">measured at boot</span>
+          </div>
+          <table class="artifacts" id="dispatchUkTable">
+            <thead><tr><th scope="col">Kernel</th><th scope="col">Cycles</th><th scope="col">Gate</th></tr></thead>
+            <tbody><tr><td colspan="3" class="empty">Loading dispatch record&hellip;</td></tr></tbody>
+          </table>
+          <p class="card__note" id="dispatchUkNote"></p>
+        </div>
+        <div class="card reveal" aria-label="Host dispatch record">
+          <div class="chartcard__head">
+            <h3 class="card__title">On native silicon</h3>
+            <span class="badge badge--ghost" id="dispatchHostBadge">same policy, host CPU</span>
+          </div>
+          <table class="artifacts" id="dispatchHostTable">
+            <thead><tr><th scope="col">Kernel</th><th scope="col">Cycles</th><th scope="col">Gate</th></tr></thead>
+            <tbody><tr><td colspan="3" class="empty">Loading dispatch record&hellip;</td></tr></tbody>
+          </table>
+          <p class="card__note" id="dispatchHostNote"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="accuracy" aria-labelledby="accuracyTitle">
+    <div class="wrap">
+      <header class="section__head reveal">
+        <span class="section__index">04</span>
+        <h2 id="accuracyTitle">Classification results</h2>
+        <p>
+          Both environments score the same frozen sample set with the shared
+          inference code. MNIST training is an optional path; a clean build uses
+          explicitly labeled synthetic smoke fixtures until trained artifacts
+          are provided.
+        </p>
+      </header>
+
+      <div class="split split--wide">
+        <div class="card reveal" aria-label="Sample accuracy ring">
+          <h3 class="card__title">Frozen sample set</h3>
+          <div class="ringwrap">
+            <svg class="ring" viewBox="0 0 160 160" role="img" aria-labelledby="ringLabel">
+              <title id="ringLabel">Sample accuracy</title>
+              <circle class="ring__track" cx="80" cy="80" r="66"></circle>
+              <circle class="ring__value" id="ringValue" cx="80" cy="80" r="66"></circle>
+            </svg>
+            <div class="ringwrap__center">
+              <span class="ringwrap__number" id="ringNumber">&mdash;</span>
+              <span class="ringwrap__caption" id="ringCaption">correct / total</span>
+            </div>
+          </div>
+          <dl class="facts" id="accuracyFacts"></dl>
+        </div>
+
+        <div class="card reveal" aria-label="Confusion matrix">
+          <div class="chartcard__head">
+            <h3 class="card__title">Confusion matrix</h3>
+            <span class="badge badge--ghost" id="matrixBadge">Full-set evaluation</span>
+          </div>
+          <div class="matrixwrap">
+            <div class="matrix" id="confusionMatrix" role="img" aria-label="Confusion matrix for the benchmark model"></div>
+          </div>
+          <p class="card__note">
+            Rows are the true digit, columns the predicted digit. Diagonal cells
+            are correct classifications; shading is normalised per row.
+          </p>
+        </div>
+      </div>
+
+      <div class="card reveal" aria-label="Classified digits">
+        <div class="chartcard__head">
+          <h3 class="card__title">Classified by the kernel</h3>
+          <span class="badge badge--ghost" id="digitBadge">first images of the sample set</span>
+        </div>
+        <div class="digits" id="digitGrid"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="training" aria-labelledby="trainingTitle">
+    <div class="wrap">
+      <header class="section__head reveal">
+        <span class="section__index">05</span>
+        <h2 id="trainingTitle">Training and artifacts</h2>
+        <p>
+          A compact multilayer perceptron can be trained on the host with
+          PyTorch. Its exported little-endian weights, or deterministic
+          untrained demo weights, are consumed by the freestanding kernel.
+        </p>
+      </header>
+
+      <div class="grid grid--2">
+        <div class="card reveal">
+          <h3 class="card__title">Test accuracy per epoch</h3>
+          <div class="chart chart--line" id="accuracyChart" role="img" aria-label="Test accuracy per epoch"></div>
+        </div>
+        <div class="card reveal">
+          <h3 class="card__title">Training loss</h3>
+          <div class="chart chart--line" id="lossChart" role="img" aria-label="Training loss per epoch"></div>
+        </div>
+      </div>
+
+      <div class="grid grid--2">
+        <div class="card reveal">
+          <h3 class="card__title">Hyperparameters</h3>
+          <dl class="facts facts--rows" id="trainingFacts"></dl>
+        </div>
+        <div class="card reveal">
+          <h3 class="card__title">Artifacts</h3>
+          <div class="tablewrap">
+            <table class="artifacts" id="artifactTable">
+              <thead><tr><th scope="col">File</th><th scope="col">Size</th><th scope="col">SHA-256</th></tr></thead>
+              <tbody><tr><td colspan="3" class="empty">Loading manifest&hellip;</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="method" aria-labelledby="methodTitle">
+    <div class="wrap">
+      <header class="section__head reveal">
+        <span class="section__index">06</span>
+        <h2 id="methodTitle">Method and honest caveats</h2>
+        <p>
+          The numbers are reproducible from the commands below, and the limits of
+          the comparison are stated rather than hidden.
+        </p>
+      </header>
+
+      <div class="grid grid--2">
+        <div class="card reveal">
+          <h3 class="card__title">How it was measured</h3>
+          <ol class="steps">
+            <li><span>01</span>Train on MNIST or generate demo fixtures, then freeze the model and samples.</li>
+            <li><span>02</span>Package the kernel and both modules into a GRUB Multiboot2 ISO.</li>
+            <li><span>03</span>Boot the ISO in QEMU with the serial port captured to a file.</li>
+            <li><span>04</span>Calibrate the timestamp counter against PIT channel&nbsp;2, then time every pass.</li>
+            <li><span>05</span>Probe CPUID, enable the AVX state, measure every eligible kernel, gate on correctness.</li>
+            <li><span>06</span>Run the same engine natively and diff the results.</li>
+            <li><span>07</span>Generate this report from the raw transcripts.</li>
+          </ol>
+          <div class="codeblock">
+            <code>make bench</code>
+            <span>builds, boots, measures and regenerates this page</span>
+          </div>
+        </div>
+
+        <div class="card reveal">
+          <h3 class="card__title">Limits of this comparison</h3>
+          <ul class="caveats">
+            <li>
+              <strong>Not a scheduler benchmark.</strong> The QEMU guest is not a
+              second Linux install in the same VM configuration, so the cross-run
+              latency ratio describes these two environments, not a universal
+              speedup.
+            </li>
+            <li>
+              <strong>Emulated CPU.</strong> Timing per instruction inside QEMU
+              differs from bare silicon, and the boot figure is dominated by
+              first-execution code translation. The methodology, not the
+              absolute number, is the transferable result. This is also why the
+              dispatch policy measures instead of trusting CPUID: AVX2 runs
+              3.2&times; slower than scalar under TCG while being faster
+              on silicon.
+            </li>
+            <li>
+              <strong>Timer overhead.</strong> Each pass includes one fenced
+              timestamp read, which is a fixed few tens of cycles.
+            </li>
+            <li>
+              <strong>Numerical tolerance.</strong> SIMD kernels reorder float32
+              sums; predictions are identical and logits agree to within the
+              500e-6 gate, but bit-exact equality is neither expected nor
+              required.
+            </li>
+          </ul>
+          <p class="card__note" id="methodNote"></p>
+        </div>
+      </div>
+
+      <div class="card card--terminal reveal" aria-label="Serial boot transcript">
+        <div class="terminal__head">
+          <span class="terminal__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="terminal__title">COM1 &middot; 115200 8N1 &middot; captured verbatim</span>
+          <button class="terminal__toggle" id="logToggle" type="button" aria-expanded="true" aria-controls="bootLog">collapse</button>
+        </div>
+        <pre class="terminal__body" id="bootLog">Waiting for the serial transcript&hellip;</pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer__inner">
+    <div>
+      <span class="brand__text">UNIKERNEL<span class="brand__accent">.ML</span></span>
+      <p>Bare-metal AI inference &middot; generated by <code>tools/make_report.py</code></p>
+    </div>
+    <div class="footer__meta">
+      <span id="footerStamp">no run recorded</span>
+      <span class="footer__sep" aria-hidden="true">&middot;</span>
+      <span>every figure comes from a captured boot</span>
+    </div>
+  </div>
+</footer>
+
+<div class="nodata" id="noData" hidden>
+  <div class="nodata__card">
+    <h2>No measurement data yet</h2>
+    <p>
+      This page renders whatever the last real benchmark produced. Run the
+      pipeline, then reload:
+    </p>
+    <pre><code>make bench</code></pre>
+    <p class="nodata__hint">
+      Data file: <code>data/results.js</code> &middot; generator:
+      <code>tools/make_report.py</code>
+    </p>
+  </div>
+</div>
+
+<script src="data/results.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
