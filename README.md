@@ -57,12 +57,15 @@ blocks with the training report and emits `dashboard/data/results.json` plus
 
 ```powershell
 .\scripts\build.ps1        # build the toolchain image and the ISO
-.\scripts\benchmark.ps1    # boot in QEMU, run both benchmarks, build the report
-.\scripts\run.ps1          # boot interactively and watch the serial console
+.\scripts\ai-os.ps1        # AI OS mode: boot an interactive ring-0 console
+.\scripts\dashboard-mode.ps1 # dashboard mode: run benchmarks and build the report
 ```
 
-Then open `dashboard/index.html` directly — it loads `data/results.js`, so no
-web server is required.
+After boot, type `help` in the serial console. Use `predict 0` (or any valid
+sample index) to run the loaded digit neural network directly inside the
+unikernel. Use `ask hello` to run the compact character model in ring 0;
+type `shutdown` to stop QEMU. The dashboard remains available separately at
+`dashboard/index.html` and loads `data/results.js` without a web server.
 
 ### Debian / Ubuntu
 
@@ -70,10 +73,42 @@ web server is required.
 sudo apt install gcc binutils make grub-pc-bin grub-common xorriso \
     qemu-system-x86 python3
 make test       # native unit tests against the exported artifacts
-make bench      # ISO + QEMU boot + native baseline + dashboard report
+make ai-os      # AI OS mode: boot the ring-0 runtime and use its serial shell
+make dashboard-mode # dashboard mode: capture, compare, and render the report
 make serve      # optional: http://localhost:8000 for the same dashboard
 make run        # interactive boot with serial on stdio
 ```
+
+The project has two explicit operating modes. **AI OS mode** is the bootable
+single-address-space ring-0 runtime: it owns the inference loop, model
+artifacts, memory arena, timing, and serial shell. **Dashboard mode** remains a
+host-side analysis workflow: it captures an AI OS run, executes the matched
+native baseline, and renders `dashboard/data/results.json` and
+`dashboard/data/results.js`. The dashboard is not an in-kernel UI.
+
+`make run` and `make ai-os` are equivalent interactive AI OS entry points.
+`make bench` and `make dashboard-mode` are equivalent measured dashboard
+entry points; the named targets make the two product modes explicit without
+changing the measured kernel path.
+
+The planned local-model flow is `make download-model` -> validate/package the
+checkpoint -> `make llm-iso` -> execute it in ring 0. The native UI is a
+Multiboot2 framebuffer with PS/2 keyboard input; there is no host-side
+inference engine or GUI in this path.
+
+To package the default TinyStories checkpoint:
+
+```sh
+make download-model
+make convert-model
+make validate-model
+make llm-iso
+```
+
+`make llm-iso` is intentionally separate from `make all`: the normal
+benchmark ISO remains dependency-free and preserves the MNIST regression
+workflow, while the LLM ISO requires the downloaded `stories260K` and
+tokenizer modules.
 
 ### Demo and MNIST training
 
@@ -130,6 +165,9 @@ benchmark and is not a guarantee for future training runs.
 | `tools/generate_demo_model.py`, `tools/generate_demo_samples.py` | Deterministic fixtures for smoke builds without training dependencies |
 | `tools/run_qemu.py` | QEMU launcher: exit-status translation, timeout, transcript validation, extra QEMU args |
 | `tools/make_report.py` | Merges transcripts into the dashboard dataset, including the dispatch record |
+| `tools/package_tinystories.py` | Validates and packages llama2.c TinyStories weights/tokenizer for zero-copy kernel loading |
+| `src/llm_runtime.c` | Freestanding tokenizer and float32 Transformer runtime with greedy decoding |
+| `src/ui.c` | Multiboot2 framebuffer console, bitmap font, and PS/2 keyboard IRQ1 path |
 | `probe/` | Capability/speed probe kernel used to gather the dispatch-policy evidence |
 | `dashboard/` | Static measurement report (no build step, no CDN) |
 | `Dockerfile.toolchain` | Debian image with GCC, GRUB, xorriso, QEMU, Python |

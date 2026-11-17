@@ -6,8 +6,8 @@ PyTorch on the host for training.
 
 ## 0. What this system does (30-second version)
 
-The project is a **benchmark machine for AI inference**, not an interactive
-app. Nobody types anything at runtime. Two binary inputs are baked into the
+The project is a **ring-0 AI inference machine with an interactive console**.
+Two binary inputs are baked into the
 bootable ISO *before* the machine starts:
 
 - `build/model.bin` — a trained 784-128-10 neural network (MNIST digit
@@ -25,8 +25,8 @@ At boot, GRUB loads the kernel and both modules into RAM. The kernel then:
 3. Repeats one forward pass 10,000 times under a cycle-accurate timer.
 4. Prints everything (accuracy, latency percentiles, throughput, dispatch
    evidence) to the serial console as both a human-readable board and a
-   machine-readable `@@BENCH` block, then opens a small ring-0 command shell.
-   The shell shuts the VM down automatically after 15 seconds of inactivity.
+   machine-readable `@@BENCH` block, then opens a persistent ring-0 command
+   shell for live inference.
 
 ```
 YOU (before boot)                THE UNIKERNEL (runtime, no user input)      OUTPUT (~25 s)
@@ -45,8 +45,18 @@ it scientific rather than anecdotal.
 
 ```powershell
 cd "C:\Users\ACER\Downloads\oss prject"
-scripts\build.ps1        # builds the toolchain image + kernel + ISO
+scripts\build.ps1          # builds the toolchain image + kernel + ISO
+scripts\ai-os.ps1          # AI OS mode: boot an interactive ring-0 console
+scripts\llm-os.ps1         # TinyStories Transformer ISO: download, package, boot, and use the LLM console
+scripts\llm-os.ps1 -Gui    # Show the native framebuffer UI using host QEMU/GTK
+scripts\llm-os.ps1 -Serial # Force the serial-console fallback
+scripts\dashboard-mode.ps1 # dashboard mode: build the report
 ```
+
+The LLM GUI uses the Multiboot linear framebuffer when available and falls
+back to the native VGA text buffer when QEMU/GRUB exposes 80x25 text mode.
+Both modes use the kernel PS/2 keyboard handler and show the local-AI prompt
+inside the QEMU window; serial output remains a diagnostic mirror.
 
 If PowerShell blocks the script (unsigned), run instead:
 
@@ -69,18 +79,24 @@ readability the commands below are written as the `make` target only.
 | Target | Input | Output | What it does |
 | --- | --- | --- | --- |
 | `make all` | sources | `build/kernel.elf`, `build/ai-os-lab.iso`, `build/host-bench` | Compile the unikernel, link it, package the bootable ISO, build the native baseline |
-| `make run` | `build/ai-os-lab.iso` | live serial console in your terminal | **Interactive boot** — watch all 8 stages, dispatch, inference, results, then the VM exits itself |
-| `make bench` | ISO + weights | `build/unikernel.log`, `build/host.json`, `dashboard/data/results.json` + `results.js` | Full measured pipeline: boot → benchmark → native baseline → regenerate the dashboard |
+| `make ai-os` | `build/ai-os-lab.iso` | live serial console in your terminal | **AI OS mode** — boot the ring-0 runtime, inspect status, and run predictions |
+| `make dashboard-mode` | ISO + weights | `build/unikernel.log`, `build/host.json`, `dashboard/data/results.json` + `results.js` | **Dashboard mode** — boot/capture AI OS → run matched native baseline → regenerate the report |
+| `make run` | `build/ai-os-lab.iso` | live serial console in your terminal | Alias for the interactive AI OS mode |
+| `make bench` | ISO + weights | benchmark and report artifacts | Alias for the dashboard mode |
 | `make dispatch-csv` | ISO artifacts | `build/dispatch.csv` | Factorial experiment: native run with each kernel forced (scalar / avx2 / fma), one CSV row each |
 | `make probe` | probe sources | `build/probe/probe.log` | Capability probe on the default QEMU CPU (expect: no AVX) |
 | `make probe-max` | probe sources | `build/probe/probe.log` | Same probe with `-cpu max` (expect: AVX2/FMA advertised, measured ~3x slower than scalar under TCG) |
 | `make serve` | dashboard files | http://localhost:8000 | Runs `make bench` first if needed, then serves the report |
 | `make test` | build artifacts | test output in terminal | All correctness gates: model/sample validation, kernel equivalence, report tooling |
 | `make train` | `data/MNIST/raw/` (host only) | `build/model.bin`, `build/samples.bin`, `build/training.json` | Trains the real MNIST MLP (needs host Python + PyTorch; deterministic seed 7) |
+| `make download-model` | internet | `models/stories260K.bin`, `models/tokenizer.bin`, manifest | Downloads the default TinyStories checkpoint for the kernel Transformer |
+| `make convert-model` | downloaded TinyStories files | `build/llm-model.bin`, `build/tokenizer.bin`, `build/llm-manifest.json` | Validates and packages the checkpoint for zero-copy kernel loading |
+| `make validate-model` | packaged LLM files | validation output | Rechecks package headers, dimensions, and payload checksums |
+| `make llm-iso` | packaged LLM files | `build/ai-os-llm.iso` | Builds the TinyStories ring-0 image with model and tokenizer GRUB modules |
 | `make demo` | — | same three artifacts, synthetic | Replaces artifacts with labeled smoke fixtures (no PyTorch needed) |
 | `make clean` | — | — | Deletes `build/` entirely |
 
-## 2. Interactive boot — what you will see (make run)
+## 2. AI OS mode — what you will see (make ai-os)
 
 ```
   [1/8] Serial console (COM1, 115200 8N1) ............................ READY
@@ -108,10 +124,16 @@ readability the commands below are written as the `make` target only.
   Throughput ........................ 780 inferences/s
 ```
 
-After the result block, `make run` accepts commands over the serial console:
-`help`, `status`, `run`, `clear`, and `shutdown` (also `exit`). The kernel
-automatically closes QEMU after 15 idle seconds, so unattended runs still
-finish without manual input.
+After the result block, `make ai-os` accepts commands over the serial console:
+`help`, `status`, `predict N`, `ask TEXT`, `run`, `clear`, and `shutdown`
+(also `exit`).
+`predict N` runs the loaded neural network directly in ring 0 against sample
+`N` from the GRUB module and prints its predicted digit, label, and logits.
+`ask TEXT` runs the compact character model directly in ring 0 and prints its
+generated response. The checked-in text model is a deterministic demo model;
+replace `build/text-model.bin` with trained weights using the documented binary
+format as model quality work continues.
+The kernel stays resident until `shutdown` is entered.
 
 ## 3. Changing the input
 
@@ -127,10 +149,12 @@ rerunning `make all` (the ISO rule picks them up) or `make bench`. Malformed
 files are rejected with a specific panic message at stage 5 — never a mystery
 triple fault.
 
-## 4. Reading the report (make bench → dashboard/index.html)
+## 4. Dashboard mode — reading the report (make dashboard-mode → dashboard/index.html)
 
-Open `dashboard/index.html` directly in a browser (double-click works; the
-page loads `data/results.js`, so no server needed). Sections:
+Run `make dashboard-mode`, then open `dashboard/index.html` directly in a
+browser (double-click works; the page loads `data/results.js`, so no server is
+needed). Dashboard mode is host-side and consumes the captured AI OS telemetry;
+it does not execute inside the kernel. Sections:
 
 1. **Boot pipeline** — the 8 stages parsed from the real captured transcript
 2. **Latency distribution** — 16-bucket histogram the kernel itself emitted,

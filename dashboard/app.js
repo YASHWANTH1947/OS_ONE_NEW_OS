@@ -120,6 +120,62 @@
 
   byId('statusText').textContent = 'qemu boot captured';
   byId('footerStamp').textContent = 'run ' + (data.generated_at || 'unknown');
+  var generatedAt = Date.parse(data.generated_at || '');
+  if (isFinite(generatedAt)) {
+    var ageHours = Math.max(0, (Date.now() - generatedAt) / 3600000);
+    if (ageHours > 72) {
+      byId('statusText').textContent = 'measurement is stale';
+      document.querySelector('.runstatus').classList.add('runstatus--stale');
+    }
+  }
+
+  function downloadReport() {
+    var blob = new Blob([JSON.stringify(data, null, 2) + '\n'], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = 'benchmark-' + (data.generated_at || 'report').replace(/[^a-z0-9]+/gi, '-') + '.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  }
+
+  function copySummary() {
+    var summary = [
+      'Unikernel benchmark',
+      'Run: ' + (data.generated_at || 'unknown'),
+      'Accuracy: ' + fixed((Number(uk.accuracy) || 0) * 100) + '% (' +
+        formatInt.format(uk.correct || 0) + '/' + formatInt.format(uk.samples || 0) + ')',
+      'Latency: p50 ' + fmtUs(uk.p50_ns) + ' us, p99 ' + fmtUs(uk.p99_ns) + ' us',
+      'Selected kernel: ' + ((data.dispatch || {}).unikernel || {}).selected || uk.kernel || 'unknown'
+    ].join('\n');
+    var button = byId('copySummary');
+    function copied() {
+      button.textContent = 'Copied';
+      window.setTimeout(function () { button.textContent = 'Copy summary'; }, 1600);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(summary).then(copied).catch(function () {
+        button.textContent = 'Copy unavailable';
+        window.setTimeout(function () { button.textContent = 'Copy summary'; }, 1600);
+      });
+    } else {
+      var area = document.createElement('textarea');
+      area.value = summary;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      var copiedByFallback = document.execCommand('copy');
+      area.remove();
+      if (copiedByFallback) copied();
+    }
+  }
+
+  byId('downloadReport').addEventListener('click', downloadReport);
+  byId('copySummary').addEventListener('click', copySummary);
 
   /* ------------------------------------------------------------ pipeline */
 
@@ -773,6 +829,21 @@
         var collapsed = log.classList.toggle('is-collapsed');
         toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
         toggle.textContent = collapsed ? 'expand' : 'collapse';
+      });
+    }
+
+    var navToggle = byId('navToggle');
+    var nav = byId('reportNav');
+    if (navToggle && nav) {
+      navToggle.addEventListener('click', function () {
+        var open = nav.classList.toggle('is-open');
+        navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      nav.addEventListener('click', function (event) {
+        if (event.target.tagName === 'A') {
+          nav.classList.remove('is-open');
+          navToggle.setAttribute('aria-expanded', 'false');
+        }
       });
     }
   }

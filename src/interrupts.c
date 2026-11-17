@@ -16,7 +16,7 @@ typedef struct {
 } __attribute__((packed)) idt_pointer_t;
 
 static idt_entry_t idt[256] __attribute__((aligned(16)));
-extern const uintptr_t isr_stub_table[32];
+extern const uintptr_t isr_stub_table[33];
 
 static void set_gate(uint32_t vector, uintptr_t handler)
 {
@@ -37,6 +37,7 @@ void idt_init(void)
     for (vector = 0; vector < 32u; ++vector) {
         set_gate(vector, isr_stub_table[vector]);
     }
+    set_gate(33u, isr_stub_table[32]);
     pointer.limit = (uint16_t)(sizeof(idt) - 1u);
     pointer.base = (uintptr_t)idt;
     __asm__ volatile ("lidt %0" : : "m"(pointer));

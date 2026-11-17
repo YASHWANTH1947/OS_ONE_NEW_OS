@@ -8,6 +8,12 @@ multiboot_header:
     .short 0
     .short 0
     .long 8
+    .short 5
+    .short 0
+    .long 20
+    .long 1024
+    .long 768
+    .long 32
 multiboot_header_end:
 
 .section .text.boot,"ax"

@@ -426,6 +426,8 @@ def main() -> None:
     )
     dataset = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "mode": "dashboard",
+        "runtime_mode": "ai-os",
         "scenario": {
             "name": "MNIST MLP forward pass"
             if is_mnist

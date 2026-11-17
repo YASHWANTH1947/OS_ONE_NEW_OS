@@ -28,7 +28,7 @@
       <span class="brand__text">UNIKERNEL<span class="brand__accent">.ML</span></span>
     </a>
 
-    <nav class="nav" aria-label="Report sections">
+    <nav class="nav" id="reportNav" aria-label="Report sections">
       <a href="#pipeline">Pipeline</a>
       <a href="#latency">Latency</a>
       <a href="#dispatch">Engine</a>
@@ -36,6 +36,11 @@
       <a href="#training">Training</a>
       <a href="#method">Method</a>
     </nav>
+
+    <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="reportNav">
+      <span class="sr-only">Toggle report navigation</span>
+      <span aria-hidden="true"></span><span aria-hidden="true"></span>
+    </button>
 
     <div class="runstatus" title="Data source">
       <span class="runstatus__dot" aria-hidden="true"></span>
@@ -116,6 +121,10 @@
               <span class="minimeter__note">TSC frequency</span>
             </div>
           </div>
+          <div class="panel__actions" aria-label="Report actions">
+            <button class="action-button" id="downloadReport" type="button">Download JSON</button>
+            <button class="action-button action-button--quiet" id="copySummary" type="button">Copy summary</button>
+          </div>
         </aside>
       </div>
     </div>
@@ -179,7 +188,7 @@
             <p class="card__note" id="histNote">Distribution of individually timed passes.</p>
           </div>
           <div class="legend" aria-hidden="true">
-            <span class="legend__item"><i class="swatch swatch--uni"></i>unikelernel passes</span>
+            <span class="legend__item"><i class="swatch swatch--uni"></i>unikernel passes</span>
           </div>
         </div>
         <div class="chart" id="histogram" role="img" aria-label="Latency histogram"></div>
